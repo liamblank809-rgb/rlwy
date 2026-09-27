@@ -1,95 +1,148 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-: "${HERMES_HOME:=/opt/data}"
-: "${API_SERVER_PORT:=8642}"
-: "${PORT:=8642}"
+: "${PORT:=3100}"
+: "${HERMES_HOME:=/data/hermes}"
+: "${PAPERCLIP_HOME:=/data/paperclip}"
+: "${PAPERCLIP_INSTANCE_ID:=default}"
+: "${FOUNDER_MODEL:=anthropic/claude-sonnet-4.6}"
+: "${PAPERCLIP_DEPLOYMENT_MODE:=authenticated}"
+: "${PAPERCLIP_DEPLOYMENT_EXPOSURE:=public}"
 
-mkdir -p "$HERMES_HOME"/{logs,workspace,memory,skills,company}
+export HOME=/data
+export PATH="/data/hermes/.local/bin:/root/.local/bin:$PATH"
 
-# Install the founder operating system into persistent storage on first boot.
+mkdir -p "$HERMES_HOME"/{company,workspace,memory,logs,skills} \
+         "$PAPERCLIP_HOME"
+
+# Founder OS is immutable in the image but copied into persistent state once.
 if [[ ! -f "$HERMES_HOME/company/SOUL.md" ]]; then
-  cp /opt/founder/SOUL.md "$HERMES_HOME/company/SOUL.md"
-  cp /opt/founder/COMPANY.md "$HERMES_HOME/company/COMPANY.md"
-  cp /opt/founder/DELEGATION.md "$HERMES_HOME/company/DELEGATION.md"
-  cp /opt/founder/OPERATING_RULES.md "$HERMES_HOME/company/OPERATING_RULES.md"
-  cp /opt/founder/FOUNDER_ROLES.md "$HERMES_HOME/company/FOUNDER_ROLES.md"
+  cp /opt/founder/*.md "$HERMES_HOME/company/"
 fi
 
-# Preserve environment-backed secrets without putting them in the image.
-python3 - <<'PY'
-import os
-from pathlib import Path
-home=Path(os.environ.get("HERMES_HOME","/opt/data"))
-p=home/"founder.env"
-vals={}
-if p.exists():
-    for line in p.read_text().splitlines():
-        if "=" in line and not line.startswith("#"):
-            k,v=line.split("=",1); vals[k]=v
-for k in ("OPENROUTER_API_KEY","OPENAI_API_KEY","ANTHROPIC_API_KEY","API_SERVER_KEY"):
-    if os.environ.get(k):
-        vals[k]=os.environ[k]
-p.write_text("".join(f"{k}={v}\n" for k,v in vals.items()))
+# Install the bundled Founder skill pack once; later upgrades can be applied
+# with /opt/founder-scripts/update-founder-skills.sh.
+if [[ ! -f "$HERMES_HOME/skills/.founder-installed" ]]; then
+  cp -R /opt/founder-skills/. "$HERMES_HOME/skills/"
+  touch "$HERMES_HOME/skills/.founder-installed"
+fi
+
+# Security: public Paperclip deployments require an explicit canonical URL.
+if [[ "$PAPERCLIP_DEPLOYMENT_MODE" == "authenticated" \
+   && "$PAPERCLIP_DEPLOYMENT_EXPOSURE" == "public" \
+   && -z "${PAPERCLIP_AUTH_PUBLIC_BASE_URL:-}" ]]; then
+  echo "[founder] ERROR: PAPERCLIP_AUTH_PUBLIC_BASE_URL is required for public authenticated mode."
+  echo "[founder] Example: https://founder-production.up.railway.app"
+  exit 1
+fi
+
+# Configure Hermes provider/model without placing credentials in source files.
+if [[ -n "${OPENROUTER_API_KEY:-}" ]]; then
+  hermes config set OPENROUTER_API_KEY "$OPENROUTER_API_KEY"
+  hermes config set model.provider openrouter
+  hermes config set model "$FOUNDER_MODEL"
+elif [[ -n "${OPENAI_API_KEY:-}" ]]; then
+  hermes config set OPENAI_API_KEY "$OPENAI_API_KEY"
+elif [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+  hermes config set ANTHROPIC_API_KEY "$ANTHROPIC_API_KEY"
+else
+  echo "[founder] ERROR: Set OPENROUTER_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY."
+  exit 1
+fi
+
+# Generate a dedicated Hermes gateway credential if one was not supplied.
+# It is persisted with the rest of the Hermes state and never printed.
+if [[ -z "${API_SERVER_KEY:-}" ]]; then
+  if [[ -f "$HERMES_HOME/.gateway-key" ]]; then
+    API_SERVER_KEY="$(cat "$HERMES_HOME/.gateway-key")"
+  else
+    API_SERVER_KEY="$(python3 - <<'PY'
+import secrets
+print(secrets.token_urlsafe(48))
 PY
+)"
+    umask 077
+    printf '%s' "$API_SERVER_KEY" > "$HERMES_HOME/.gateway-key"
+  fi
+fi
+export API_SERVER_ENABLED=true
+export API_SERVER_KEY
 
-# Optional curated skill bootstrap. It is idempotent and opt-in.
-if [[ "${INSTALL_FOUNDER_SKILLS:-true}" == "true" ]] && command -v hermes >/dev/null 2>&1; then
-  /opt/founder/install-skills.sh || true
+# Configure Paperclip public server settings. Paperclip's embedded PostgreSQL
+# is persistent because PAPERCLIP_HOME is mounted on the Railway volume.
+export HOST=0.0.0.0
+export PAPERCLIP_PORT="$PORT"
+
+# First boot: onboard Paperclip. The command is idempotent once the config exists.
+if [[ ! -f "$PAPERCLIP_HOME/instances/$PAPERCLIP_INSTANCE_ID/config.json" ]]; then
+  echo "[founder] Running Paperclip onboarding..."
+  paperclipai onboard --yes
 fi
 
-echo "[founder] starting Hermes gateway"
-hermes gateway run --replace >"$HERMES_HOME/logs/hermes.log" 2>&1 &
-PID=$!
-trap 'kill "$PID" 2>/dev/null || true' EXIT INT TERM
+# Repair/check configuration before starting.
+paperclipai doctor --repair || paperclipai doctor
 
-for _ in $(seq 1 90); do
-  if curl -fsS --max-time 2 "http://127.0.0.1:${API_SERVER_PORT}/health" >/dev/null 2>&1; then
+# Start Paperclip.
+echo "[founder] Starting Paperclip..."
+paperclipai run >"$PAPERCLIP_HOME/paperclip.log" 2>&1 &
+PAPERCLIP_PID=$!
+
+# Wait for the documented Paperclip health endpoint.
+READY=0
+for _ in $(seq 1 120); do
+  if curl -fsS --max-time 2 "http://127.0.0.1:${PORT}/api/health" >/dev/null 2>&1; then
+    READY=1
     break
   fi
-  kill -0 "$PID" 2>/dev/null || { tail -200 "$HERMES_HOME/logs/hermes.log"; exit 1; }
+  if ! kill -0 "$PAPERCLIP_PID" 2>/dev/null; then
+    echo "[founder] Paperclip exited during startup."
+    tail -250 "$PAPERCLIP_HOME/paperclip.log" || true
+    exit 1
+  fi
   sleep 2
 done
 
-curl -fsS --max-time 2 "http://127.0.0.1:${API_SERVER_PORT}/health" >/dev/null \
-  || { tail -200 "$HERMES_HOME/logs/hermes.log"; exit 1; }
+if [[ "$READY" != "1" ]]; then
+  echo "[founder] Paperclip did not become ready."
+  tail -250 "$PAPERCLIP_HOME/paperclip.log" || true
+  exit 1
+fi
 
-# Railway must see a listener on $PORT. Keep Hermes private and expose only
-# an authenticated proxy.
-cat >/tmp/proxy.py <<'PY'
-import os, http.client
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+# Hermes gateway is private to this container. Paperclip connects to it via
+# localhost:8642 using the dedicated API_SERVER_KEY.
+echo "[founder] Starting Hermes gateway..."
+hermes gateway run --replace --accept-hooks >"$HERMES_HOME/logs/gateway.log" 2>&1 &
+HERMES_PID=$!
 
-PORT=int(os.environ["PORT"])
-UP=int(os.environ.get("API_SERVER_PORT","8642"))
-KEY=os.environ.get("API_SERVER_KEY","")
+# Supervise both children. Railway sees this process as the service.
+cleanup() {
+  kill "$HERMES_PID" 2>/dev/null || true
+  kill "$PAPERCLIP_PID" 2>/dev/null || true
+  wait "$HERMES_PID" 2>/dev/null || true
+  wait "$PAPERCLIP_PID" 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
 
-class H(BaseHTTPRequestHandler):
-    protocol_version="HTTP/1.1"
-    def _go(self):
-        if self.path != "/health" and KEY:
-            if self.headers.get("Authorization","") != "Bearer "+KEY:
-                self.send_response(401); self.send_header("Content-Length","0"); self.end_headers(); return
-        n=int(self.headers.get("Content-Length","0"))
-        body=self.rfile.read(n) if n else None
-        c=http.client.HTTPConnection("127.0.0.1",UP,timeout=600)
-        try:
-            hs={k:v for k,v in self.headers.items()
-                if k.lower() not in ("host","content-length","connection")}
-            if body is not None: hs["Content-Length"]=str(len(body))
-            c.request(self.command,self.path,body=body,headers=hs)
-            r=c.getresponse(); data=r.read()
-            self.send_response(r.status,r.reason)
-            for k,v in r.getheaders():
-                if k.lower() not in ("connection","transfer-encoding","content-length"):
-                    self.send_header(k,v)
-            self.send_header("Content-Length",str(len(data)))
-            self.end_headers(); self.wfile.write(data)
-        finally: c.close()
-    do_GET=_go; do_POST=_go; do_PUT=_go; do_PATCH=_go; do_DELETE=_go
-    def log_message(self,f,*a): print("[proxy]",f%a,flush=True)
+python3 /usr/local/bin/founder-health "$PORT" "$PORT" &
+HEALTH_PID=$!
 
-ThreadingHTTPServer(("0.0.0.0",PORT),H).serve_forever()
-PY
+trap 'kill "$HEALTH_PID" 2>/dev/null || true; cleanup' EXIT INT TERM
 
-exec python3 /tmp/proxy.py
+echo "[founder] Founder service online."
+echo "[founder] Paperclip: http://127.0.0.1:${PORT}"
+echo "[founder] Hermes gateway: http://127.0.0.1:8642"
+echo "[founder] Persistent state: ${HERMES_HOME} + ${PAPERCLIP_HOME}"
+
+while true; do
+  if ! kill -0 "$PAPERCLIP_PID" 2>/dev/null; then
+    echo "[founder] Paperclip stopped."
+    tail -250 "$PAPERCLIP_HOME/paperclip.log" || true
+    exit 1
+  fi
+  if ! kill -0 "$HERMES_PID" 2>/dev/null; then
+    echo "[founder] Hermes gateway stopped."
+    tail -250 "$HERMES_HOME/logs/gateway.log" || true
+    exit 1
+  fi
+  sleep 5
+done

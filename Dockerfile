@@ -1,21 +1,48 @@
-# Founder Hermes runtime
-FROM nousresearch/hermes-agent:latest
+# Founder Edition — complete single-service Railway image
+FROM node:24-bookworm
 
-USER root
-RUN apt-get update \
- && apt-get install -y --no-install-recommends curl ca-certificates git jq ripgrep \
- && rm -rf /var/lib/apt/lists/*
+ARG PAPERCLIP_VERSION=latest
+ARG HERMES_BRANCH=main
 
-COPY entrypoint.sh /usr/local/bin/founder-entrypoint
+ENV DEBIAN_FRONTEND=noninteractive \
+    HOME=/data \
+    HERMES_HOME=/data/hermes \
+    PAPERCLIP_HOME=/data/paperclip \
+    PAPERCLIP_INSTANCE_ID=default \
+    NODE_ENV=production \
+    PATH=/data/hermes/.local/bin:/root/.local/bin:${PATH}
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl git jq ripgrep python3 tini \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN if [ "$PAPERCLIP_VERSION" = "latest" ]; then \
+      npm install -g paperclipai; \
+    else \
+      npm install -g "paperclipai@${PAPERCLIP_VERSION}"; \
+    fi
+
+# Hermes official source installer. Browser tooling remains enabled because
+# the Founder role includes research/browser workflows.
+RUN mkdir -p /data/hermes /data/paperclip \
+ && curl -fsSL https://hermes-agent.nousresearch.com/install.sh \
+      | bash -s -- \
+        --branch "${HERMES_BRANCH}" \
+        --hermes-home /data/hermes \
+        --non-interactive
+
 COPY founder /opt/founder
+COPY skills /opt/founder-skills
+COPY scripts /opt/founder-scripts
+COPY entrypoint.sh /usr/local/bin/founder-entrypoint
+COPY health-server.py /usr/local/bin/founder-health
+
 RUN chmod +x /usr/local/bin/founder-entrypoint \
- && chmod +x /opt/founder/*.sh
+             /usr/local/bin/founder-health \
+             /opt/founder-scripts/*.sh \
+ && mkdir -p /data/hermes/company /data/hermes/workspace \
+             /data/hermes/logs /data/paperclip
 
-ENV HERMES_HOME=/opt/data \
-    API_SERVER_ENABLED=true \
-    API_SERVER_HOST=127.0.0.1 \
-    API_SERVER_PORT=8642 \
-    PORT=8642
+EXPOSE 3100
 
-EXPOSE 8642
-ENTRYPOINT ["/usr/local/bin/founder-entrypoint"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/founder-entrypoint"]

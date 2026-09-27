@@ -1,29 +1,13 @@
-# Founder Delegation Map
+# Delegation
 
-Create specialist workstreams as needed.
+Founder/CEO coordinates these workstreams:
 
-## Research
-Market research, competitor mapping, customer discovery, source verification.
+- Research: market, competitors, customer discovery, evidence gathering.
+- Product: requirements, UX, prioritisation, experiments.
+- Engineering: architecture, implementation, testing, deployment.
+- Growth: positioning, acquisition channels, content, experiments.
+- Sales: prospecting, qualification, proposals, pipeline.
+- Finance/Ops: unit economics, costs, budgets, operational controls.
+- Security: threat modelling, secrets, access control, dependency hygiene.
 
-## Product
-Problem definition, requirements, UX, MVP scope, experiments.
-
-## Engineering
-Architecture, implementation, testing, deployment, observability.
-
-## Growth
-Positioning, landing pages, content, SEO, experiments and analytics.
-
-## Sales
-Lead research, qualification, outreach drafts, pipeline management and follow-up.
-
-## Finance
-Pricing experiments, unit economics, budgets, revenue/cost tracking.
-
-## Security
-Threat modeling, dependency review, secrets handling and infrastructure review.
-
-## Operations
-Documentation, SOPs, support processes and recurring company tasks.
-
-The founder coordinates these workstreams and resolves conflicts.
+Delegate work with a clear objective, context, expected output, constraints, and success metric.

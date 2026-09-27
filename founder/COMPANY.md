@@ -1,31 +1,28 @@
-# Company Charter
+# Founder Company Operating System
 
-## Mandate
-Build a real, sustainable software business.
+Core loop:
 
-## Initial operating loop
-Research -> hypothesis -> validation -> MVP -> distribution -> sales -> delivery -> metrics -> iteration.
+Research -> Hypothesis -> Validation -> MVP -> Distribution -> Sales -> Delivery -> Metrics -> Iteration
 
-## Core metrics
-- qualified opportunities
-- customer interviews
-- activation
-- conversion
-- revenue
-- gross margin
-- retention
-- acquisition cost
-- payback period
-- product usage
-- delivery time
+Every significant initiative should record:
+1. Objective
+2. Evidence
+3. Hypothesis
+4. Expected upside
+5. Cost/resources
+6. Risks
+7. Next measurable test
+8. Decision and rationale
 
-## Decision standard
-Every significant initiative should state:
-- objective
-- evidence
-- expected upside
-- cost
-- risks
-- next measurable test
-
-No invented customer evidence, revenue, usage or market facts.
+Core metrics:
+- Qualified opportunities
+- Customer interviews
+- Activation
+- Conversion
+- Revenue
+- Gross margin
+- Retention
+- Acquisition cost
+- Payback period
+- Usage
+- Delivery time

@@ -1,39 +1,26 @@
 services:
-  founder-hermes:
+  founder:
     build:
       context: .
-      dockerfile: Dockerfile
+      args:
+        PAPERCLIP_VERSION: latest
+        HERMES_BRANCH: main
     environment:
-      HERMES_HOME: /opt/data
-      PORT: 8642
-      API_SERVER_ENABLED: "true"
-      API_SERVER_HOST: 127.0.0.1
-      API_SERVER_PORT: 8642
-      API_SERVER_KEY: ${API_SERVER_KEY:?set API_SERVER_KEY}
+      PORT: 3100
+      HERMES_HOME: /data/hermes
+      PAPERCLIP_HOME: /data/paperclip
+      PAPERCLIP_INSTANCE_ID: default
+      PAPERCLIP_DEPLOYMENT_MODE: ${PAPERCLIP_DEPLOYMENT_MODE:-local_trusted}
+      PAPERCLIP_DEPLOYMENT_EXPOSURE: ${PAPERCLIP_DEPLOYMENT_EXPOSURE:-private}
+      PAPERCLIP_AUTH_PUBLIC_BASE_URL: ${PAPERCLIP_AUTH_PUBLIC_BASE_URL:-}
+      PAPERCLIP_ALLOWED_HOSTNAMES: ${PAPERCLIP_ALLOWED_HOSTNAMES:-}
+      FOUNDER_MODEL: ${FOUNDER_MODEL:-anthropic/claude-sonnet-4.6}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      INSTALL_FOUNDER_SKILLS: ${INSTALL_FOUNDER_SKILLS:-true}
-      FOUNDER_SKILLS: ${FOUNDER_SKILLS:-github docker linux research browser playwright product strategy marketing sales finance}
-    volumes:
-      - founder-data:/opt/data
-    ports:
-      - "8642:8642"
-
-  paperclip:
-    image: ghcr.io/paperclipai/paperclip:latest
-    environment:
-      HOST: 0.0.0.0
-      PORT: 3100
-      SERVE_UI: "true"
-      PAPERCLIP_HOME: /paperclip
-      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET}
-      PAPERCLIP_TOOL_ACTION_SIGNING_SECRET: ${PAPERCLIP_TOOL_ACTION_SIGNING_SECRET:?set PAPERCLIP_TOOL_ACTION_SIGNING_SECRET}
-    volumes:
-      - paperclip-data:/paperclip
     ports:
       - "3100:3100"
-
+    volumes:
+      - founder-data:/data
 volumes:
   founder-data:
-  paperclip-data:
